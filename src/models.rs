@@ -30,6 +30,30 @@ impl Board {
         }
     }
 
+    pub fn change_x(&mut self, x: usize) {
+        *self = Self::new(x, self.y, self.number_of_mines);
+    }
+
+    pub fn change_y(&mut self, y: usize) {
+        *self = Self::new(self.x, y, self.number_of_mines);
+    }
+
+    pub fn change_mines(&mut self, mines: usize) {
+        *self = Self::new(self.x, self.y, mines);
+    }
+
+    pub fn x(&self) -> usize {
+        self.x
+    }
+
+    pub fn y(&self) -> usize {
+        self.y
+    }
+
+    pub fn number_of_mines(&self) -> usize {
+        self.number_of_mines
+    }
+
     pub fn get_remaining(&self) -> usize {
         self.remaining
     }
@@ -39,7 +63,7 @@ impl Board {
     }
 
     pub fn get_point(&self, x: usize, y: usize) -> &Point {
-        &self.inner[x][y]
+        &self.inner[y][x]
     }
 
     fn ground_mines(&mut self, first_click: (usize, usize)) {
@@ -53,15 +77,16 @@ impl Board {
         }
         mines_position.remove(&first_click);
         for mine in mines_position.into_iter() {
-            log::info!("{mine:?}");
-            let Some(elem) = self.inner[mine.0].get_mut(mine.1) else {
+            log::debug!("mine: ({}, {})", mine.1, mine.0);
+            let Some(elem) = self.inner[mine.1].get_mut(mine.0) else {
                 continue;
             };
             elem.mine = true;
             for d in DIRECTIONS {
                 match (mine.0.checked_add_signed(d.0), mine.1.checked_add_signed(d.1)) {
                     (Some(point_x), Some(point_y)) if self.point_in_limit(point_x, point_y) => {
-                        self.inner[point_x][point_y].number += 1;
+                        log::debug!("parsing: ({point_y}, {point_x})");
+                        self.inner[point_y][point_x].number += 1;
                     }
                     (_, _) => {
                         // If there's an overflow, ignore that direction
@@ -76,24 +101,43 @@ impl Board {
         x < self.x && y < self.y
     }
 
+    fn end_game(&mut self) {
+        self.end = true;
+        for i in &mut self.inner {
+            for j in i {
+                j.show = true;
+                j.flag = false;
+            }
+        }
+    }
+
     pub fn handle_click(&mut self, x: usize, y: usize) {
         if self.first_click {
             self.first_click = false;
             self.ground_mines((x, y));
         }
-        let Some(elem) = self.inner[x].get_mut(y) else {
+        let mine;
+        let number;
+
+        if let Some(elem) = self.inner[y].get_mut(x) {
+            if elem.show || self.end || elem.flag {
+                return;
+            }
+            elem.show = true;
+            elem.clicked = true;
+            (mine, number) = (elem.mine, elem.number);
+        } else {
             return;
         };
-        if elem.show || self.end {
-            return;
-        }
-        elem.show = true;
-        if elem.mine {
-            self.end = true;
+        if mine {
+            self.end_game();
         } else {
             self.remaining -= 1;
+            if self.remaining == 0 {
+                self.end_game();
+            }
         }
-        if elem.number == 0 && !elem.mine {
+        if number == 0 && !mine {
             for d in DIRECTIONS {
                 match (x.checked_add_signed(d.0), y.checked_add_signed(d.1)) {
                     (Some(point_x), Some(point_y)) if self.point_in_limit(point_x, point_y) => {
@@ -106,20 +150,40 @@ impl Board {
             }
         }
     }
+
+    pub fn put_flag(&mut self, x: usize, y: usize) {
+        if let Some(elem) = self.inner[y].get_mut(x) {
+            if !elem.show {
+                elem.flag = !elem.flag;
+            }
+        }
+    }
+
+    pub fn count_flags(&self) -> usize {
+        self.inner.iter().map(|x| x.iter().filter(|y| y.flag).count()).sum()
+    }
 }
 
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Debug)]
 pub(crate) struct Point {
     mine: bool,
     show: bool,
+    flag: bool,
+    clicked: bool,
     number: usize,
 }
 
 impl Point {
     pub(crate) fn show_cell(&self) -> String {
-        if self.show {
+        if self.flag {
+            "🚩".to_string()
+        } else if self.show {
             if self.mine {
-                "💣".to_string()
+                if self.clicked {
+                    "💥".to_string()
+                } else {
+                    "💣".to_string()
+                }
             } else {
                 self.number.to_string()
             }
@@ -128,7 +192,7 @@ impl Point {
         }
     }
 
-    pub(crate) fn is_showing(&self) -> bool {
+    pub(crate) fn show(&self) -> bool {
         self.show
     }
 }
