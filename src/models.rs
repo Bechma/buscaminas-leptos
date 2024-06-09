@@ -106,7 +106,6 @@ impl Board {
         for i in &mut self.inner {
             for j in i {
                 j.show = true;
-                j.flag = false;
             }
         }
     }
@@ -176,7 +175,11 @@ pub(crate) struct Point {
 impl Point {
     pub(crate) fn show_cell(&self) -> String {
         if self.flag {
-            "🚩".to_string()
+            if self.show && !self.mine {
+                "❌".to_string()
+            } else {
+                "🚩".to_string()
+            }
         } else if self.show {
             if self.mine {
                 if self.clicked {
