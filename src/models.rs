@@ -1,5 +1,7 @@
 use std::collections::HashSet;
 
+use leptos::{IntoView, RwSignal, SignalUpdate, view};
+
 pub struct Board {
     inner: Vec<Vec<Point>>,
     end: bool,
@@ -19,12 +21,18 @@ static DIRECTIONS: [(isize, isize); 8] = [
 
 impl Board {
     pub fn new(x: usize, y: usize, number_of_mines: usize) -> Self {
+        let total_cells = x * y;
+        let (remaining, number_of_mines) = if total_cells <= number_of_mines {
+            (1, total_cells - 1)
+        } else {
+            (total_cells - number_of_mines, number_of_mines)
+        };
         Self {
             end: false,
             first_click: true,
             inner: vec![vec![Point::default(); x]; y],
             number_of_mines,
-            remaining: (x * y) - number_of_mines,
+            remaining,
             x,
             y,
         }
@@ -62,8 +70,8 @@ impl Board {
         self.end
     }
 
-    pub fn get_point(&self, x: usize, y: usize) -> &Point {
-        &self.inner[y][x]
+    pub fn get_point_view(&self, x: usize, y: usize, board: RwSignal<Self>) -> impl IntoView {
+        self.inner[y][x].to_view(x, y, board)
     }
 
     fn ground_mines(&mut self, first_click: (usize, usize)) {
@@ -197,5 +205,44 @@ impl Point {
 
     pub(crate) fn show(&self) -> bool {
         self.show
+    }
+
+    pub(crate) fn to_view(&self, x: usize, y: usize, board: RwSignal<Board>) -> impl IntoView {
+        let cell = self.show_cell();
+        let is_showing = self.show();
+        let text_color = if is_showing {
+            match self.number {
+                0 => if self.mine { "" } else { "text-transparent" },
+                1 => "text-blue-500",
+                2 => "text-green-500",
+                3 => "text-red-800",
+                4 => "text-blue-950",
+                5 => "text-orange-500",
+                6 => "text-cyan-800",
+                7 => "text-black",
+                8 => "text-stone-500",
+                _ => unreachable!("you can't have more than 8 mines around you"),
+            }
+        } else {
+            "drop-shadow"
+        };
+        let point_class = format!("bg-gray-200 w-8 text-center border-solid border-2 m-0.5 font-bold {text_color}");
+        view! {
+            <div on:click=move |ev| {
+                    ev.prevent_default();
+                    if !is_showing {
+                        board.update(|new_b| new_b.handle_click(x, y));
+                    }
+                }
+                on:contextmenu=move |ev| {
+                    ev.prevent_default();
+                    if !is_showing {
+                        board.update(|new_b| new_b.put_flag(x, y));
+                    }
+                }
+                class={point_class}>
+                {cell}
+            </div>
+        }
     }
 }
