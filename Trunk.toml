@@ -1,3 +1,5 @@
 [build]
 dist = "debug_dist"
 minify = "on_release"
+public_url = "/buscaminas-leptos/"
+filehash = false
