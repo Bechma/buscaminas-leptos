@@ -1,4 +1,2 @@
 /target
-/dist
-package-lock.json
-/node_modules
+/debug_dist

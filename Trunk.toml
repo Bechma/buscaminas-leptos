@@ -1,0 +1,3 @@
+[build]
+dist = "debug_dist"
+minify = "on_release"
