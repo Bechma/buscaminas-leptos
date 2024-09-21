@@ -1,13 +1,13 @@
+use leptos::{component, view, IntoView, ReadSignal, RwSignal, SignalGet, SignalGetUntracked, SignalSet, SignalUpdate, SignalWith};
 use std::collections::HashSet;
-
-use leptos::{IntoView, RwSignal, SignalUpdate, view};
+use std::rc::Rc;
 
 pub struct Board {
-    inner: Vec<Vec<Point>>,
-    end: bool,
-    first_click: bool,
+    inner: Vec<Vec<Rc<Point>>>,
+    end: RwSignal<bool>,
+    first_click: RwSignal<bool>,
     number_of_mines: usize,
-    remaining: usize,
+    remaining: RwSignal<usize>,
     x: usize,
     y: usize,
 }
@@ -28,11 +28,11 @@ impl Board {
             (total_cells - number_of_mines, number_of_mines)
         };
         Self {
-            end: false,
-            first_click: true,
-            inner: vec![vec![Point::default(); x]; y],
+            end: RwSignal::new(false),
+            first_click: RwSignal::new(true),
+            inner: (0..y).map(|_| (0..x).map(|_| Rc::new(Point::default())).collect()).collect(),
             number_of_mines,
-            remaining,
+            remaining: RwSignal::new(remaining),
             x,
             y,
         }
@@ -63,18 +63,23 @@ impl Board {
     }
 
     pub fn get_remaining(&self) -> usize {
-        self.remaining
+        self.remaining.get()
     }
 
     pub fn ended(&self) -> bool {
-        self.end
+        self.end.get()
     }
 
-    pub fn get_point_view(&self, x: usize, y: usize, board: RwSignal<Self>) -> impl IntoView {
-        self.inner[y][x].to_view(x, y, board)
+    pub fn get_point_view(&self, x: usize, y: usize, board: ReadSignal<Self>) -> impl IntoView {
+        PointView(PointViewProps {
+            point: self.inner[y][x].clone(),
+            x,
+            y,
+            board,
+        })
     }
 
-    fn ground_mines(&mut self, first_click: (usize, usize)) {
+    fn ground_mines(&self, first_click: (usize, usize)) {
         let mut mines_position = HashSet::new();
         mines_position.insert(first_click);
         let number_of_mines = self.number_of_mines + 1; // +1 because of the first_click
@@ -86,15 +91,15 @@ impl Board {
         mines_position.remove(&first_click);
         for mine in mines_position.into_iter() {
             log::debug!("mine: ({}, {})", mine.1, mine.0);
-            let Some(elem) = self.inner[mine.1].get_mut(mine.0) else {
+            let Some(elem) = self.inner[mine.1].get(mine.0) else {
                 continue;
             };
-            elem.mine = true;
+            elem.mine.set(true);
             for d in DIRECTIONS {
                 match (mine.0.checked_add_signed(d.0), mine.1.checked_add_signed(d.1)) {
                     (Some(point_x), Some(point_y)) if self.point_in_limit(point_x, point_y) => {
                         log::debug!("parsing: ({point_y}, {point_x})");
-                        self.inner[point_y][point_x].number += 1;
+                        self.inner[point_y][point_x].number.update(|n| *n += 1);
                     }
                     (_, _) => {
                         // If there's an overflow, ignore that direction
@@ -109,42 +114,38 @@ impl Board {
         x < self.x && y < self.y
     }
 
-    fn end_game(&mut self) {
-        self.end = true;
-        for i in &mut self.inner {
+    fn end_game(&self) {
+        self.end.set(true);
+        for i in &self.inner {
             for j in i {
-                j.show = true;
+                j.show.set(true);
             }
         }
     }
 
-    pub fn handle_click(&mut self, x: usize, y: usize) {
-        if self.first_click {
-            self.first_click = false;
+    pub fn handle_click(&self, x: usize, y: usize) {
+        if self.first_click.get_untracked() {
+            self.first_click.set(false);
             self.ground_mines((x, y));
         }
-        let mine;
-        let number;
-
-        if let Some(elem) = self.inner[y].get_mut(x) {
-            if elem.show || self.end || elem.flag {
-                return;
-            }
-            elem.show = true;
-            elem.clicked = true;
-            (mine, number) = (elem.mine, elem.number);
-        } else {
+        let Some(elem) = self.inner[y].get(x) else {
             return;
         };
+        if elem.show.get_untracked() || self.end.get() || elem.flag.get_untracked() {
+            return;
+        }
+        elem.show.set(true);
+        elem.clicked.set(true);
+        let mine = elem.mine.get_untracked();
         if mine {
             self.end_game();
         } else {
-            self.remaining -= 1;
-            if self.remaining == 0 {
+            self.remaining.update(|r| *r -= 1);
+            if self.remaining.get_untracked() == 0 {
                 self.end_game();
             }
         }
-        if number == 0 && !mine {
+        if elem.number.get_untracked() == 0 && !mine {
             for d in DIRECTIONS {
                 match (x.checked_add_signed(d.0), y.checked_add_signed(d.1)) {
                     (Some(point_x), Some(point_y)) if self.point_in_limit(point_x, point_y) => {
@@ -158,61 +159,58 @@ impl Board {
         }
     }
 
-    pub fn put_flag(&mut self, x: usize, y: usize) {
-        if let Some(elem) = self.inner[y].get_mut(x) {
-            if !elem.show {
-                elem.flag = !elem.flag;
+    pub fn put_flag(&self, x: usize, y: usize) {
+        if let Some(elem) = self.inner[y].get(x) {
+            if !elem.show.get() {
+                elem.flag.update(|x| *x = !*x);
             }
         }
     }
 
     pub fn count_flags(&self) -> usize {
-        self.inner.iter().map(|x| x.iter().filter(|y| y.flag).count()).sum()
+        self.inner.iter().map(|x| x.iter().filter(|y| y.flag.get()).count()).sum()
     }
 }
 
 #[derive(Default, Clone, Debug)]
 pub(crate) struct Point {
-    mine: bool,
-    show: bool,
-    flag: bool,
-    clicked: bool,
-    number: usize,
+    mine: RwSignal<bool>,
+    show: RwSignal<bool>,
+    flag: RwSignal<bool>,
+    clicked: RwSignal<bool>,
+    number: RwSignal<usize>,
 }
 
 impl Point {
-    pub(crate) fn show_cell(&self) -> String {
-        if self.flag {
-            if self.show && !self.mine {
+    fn show_cell(&self) -> String {
+        if self.flag.get() {
+            if self.show.get() && !self.mine.get() {
                 "❌".to_string()
             } else {
                 "🚩".to_string()
             }
-        } else if self.show {
-            if self.mine {
-                if self.clicked {
+        } else if self.show.get() {
+            if self.mine.get() {
+                if self.clicked.get() {
                     "💥".to_string()
                 } else {
                     "💣".to_string()
                 }
             } else {
-                self.number.to_string()
+                self.number.get().to_string()
             }
         } else {
             "-".to_string()
         }
     }
 
-    pub(crate) fn show(&self) -> bool {
-        self.show
-    }
-
-    pub(crate) fn to_view(&self, x: usize, y: usize, board: RwSignal<Board>) -> impl IntoView {
+    /*
+    fn to_view(&self, x: usize, y: usize, board: ReadSignal<Board>) -> impl IntoView {
         let cell = self.show_cell();
-        let is_showing = self.show();
-        let text_color = if is_showing {
-            match self.number {
-                0 => if self.mine { "" } else { "text-transparent" },
+        let is_showing = || self.show.get();
+        let point_class = move || format!("bg-gray-200 w-8 text-center border-solid border-2 m-0.5 font-bold {}", if is_showing() {
+            match self.number.get() {
+                0 => if self.mine.get() { "" } else { "text-transparent" },
                 1 => "text-blue-500",
                 2 => "text-green-500",
                 3 => "text-red-800",
@@ -225,24 +223,63 @@ impl Point {
             }
         } else {
             "drop-shadow"
-        };
-        let point_class = format!("bg-gray-200 w-8 text-center border-solid border-2 m-0.5 font-bold {text_color}");
+        });
         view! {
-            <div on:click=move |ev| {
-                    ev.prevent_default();
-                    if !is_showing {
-                        board.update(|new_b| new_b.handle_click(x, y));
-                    }
+            <div on:click={move |ev| {
+                ev.prevent_default();
+                if !is_showing() {
+                    board.with(|b| b.handle_click(x, y));
                 }
-                on:contextmenu=move |ev| {
-                    ev.prevent_default();
-                    if !is_showing {
-                        board.update(|new_b| new_b.put_flag(x, y));
-                    }
-                }
-                class={point_class}>
+            }}
+            on:contextmenu={move |ev| {
+            ev.prevent_default();
+            if !is_showing() {
+                board.with(|b| b.put_flag(x, y));
+            }
+        }} class={point_class}>
                 {cell}
             </div>
         }
     }
+     */
+}
+
+#[component]
+fn PointView(point: Rc<Point>, x: usize, y: usize, board: ReadSignal<Board>) -> impl IntoView {
+    let show = point.show;
+    let number = point.number;
+    let mine = point.mine;
+    let is_showing = move || show.get();
+    let point_class = move || format!("bg-gray-200 w-8 text-center border-solid border-2 m-0.5 font-bold {}", if is_showing() {
+        match number.get() {
+            0 => if mine.get() { "" } else { "text-transparent" },
+            1 => "text-blue-500",
+            2 => "text-green-500",
+            3 => "text-red-800",
+            4 => "text-blue-950",
+            5 => "text-orange-500",
+            6 => "text-cyan-800",
+            7 => "text-black",
+            8 => "text-stone-500",
+            n => unreachable!("you can't have {} in {},{} more than 8 mines around you", n, x, y),
+        }
+    } else {
+        "drop-shadow"
+    });
+    view! {
+            <div on:click={move |ev| {
+                ev.prevent_default();
+                if !is_showing() {
+                    board.with(|b| b.handle_click(x, y));
+                }
+            }}
+            on:contextmenu={move |ev| {
+            ev.prevent_default();
+            if !is_showing() {
+                board.with(|b| b.put_flag(x, y));
+            }
+        }} class={point_class}>
+                {move || point.show_cell()}
+            </div>
+        }
 }

@@ -35,7 +35,9 @@ pub fn Minesweeper() -> impl IntoView {
                     <div class="flex gap-x-2 bg-pink-300">
                         <label for="number_of_mines">Number of mines</label>
                         <input on:input=move |ev| {
-                            let value = event_target_value(&ev).parse::<usize>().unwrap();
+                            let Ok(value) = event_target_value(&ev).parse::<usize>() else {
+                                return
+                            };
                             board.update(|b| b.change_mines(value));
                         } id="number_of_mines" type="number" value={initial_mines}
                         prop:value=move || board.with(|b| b.number_of_mines())
@@ -74,7 +76,7 @@ pub fn Minesweeper() -> impl IntoView {
                         <div class="flex">
                             {
                                 (0..b.x()).map(|x| {
-                                    b.get_point_view(x, y, board)
+                                    b.get_point_view(x, y, board.read_only())
                                 }).collect_view()
                             }
                         </div>
